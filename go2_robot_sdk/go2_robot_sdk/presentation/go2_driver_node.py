@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Dict, Any
 
 from aiortc import MediaStreamTrack
@@ -31,12 +32,27 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def _configure_video_decoder_logging() -> None:
+    """Reduce noisy H264 decoder logs from aiortc/PyAV."""
+    logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
+    logging.getLogger("aiortc.codecs").setLevel(logging.ERROR)
+
+    try:
+        import av  # type: ignore
+        av.logging.set_level(av.logging.ERROR)
+    except Exception:
+        # PyAV may be unavailable or logging config may fail; ignore safely
+        pass
+
+
 class Go2DriverNode(Node):
     """Main Go2 driver node - entry point to the application"""
 
     def __init__(self, event_loop=None):
         super().__init__('go2_driver_node')  # Clean architecture main driver
         self.event_loop = event_loop
+
+        _configure_video_decoder_logging()
         
         # Configuration initialization
         self.config = self._setup_configuration()
@@ -73,6 +89,8 @@ class Go2DriverNode(Node):
         
         # State
         self.joy_state = Joy()
+        self._last_cmd_vel_log = 0.0
+        self._last_cmd_vel_out_time = 0.0
 
     def _setup_configuration(self) -> RobotConfig:
         """Configuration setup"""
@@ -202,7 +220,11 @@ class Go2DriverNode(Node):
         if self.config.conn_mode == 'single':
             self.create_subscription(
                 Twist, 'cmd_vel_out',
-                lambda msg: self._on_cmd_vel(msg, "0"), qos_profile)
+                lambda msg: self._on_cmd_vel(msg, "0", source="cmd_vel_out"), qos_profile)
+            # Direct Nav2 fallback (bypass twist_mux if cmd_vel_out is idle)
+            self.create_subscription(
+                Twist, 'cmd_vel_nav',
+                lambda msg: self._on_cmd_vel(msg, "0", source="cmd_vel_nav"), qos_profile)
             self.create_subscription(
                 WebRtcReq, 'webrtc_req',
                 lambda msg: self._on_webrtc_req(msg, "0"), qos_profile)
@@ -210,7 +232,11 @@ class Go2DriverNode(Node):
             for i in range(num_robots):
                 self.create_subscription(
                     Twist, f'robot{i}/cmd_vel_out',
-                    lambda msg, robot_id=str(i): self._on_cmd_vel(msg, robot_id), qos_profile)
+                    lambda msg, robot_id=str(i): self._on_cmd_vel(msg, robot_id, source="cmd_vel_out"), qos_profile)
+                # Direct Nav2 fallback (bypass twist_mux if cmd_vel_out is idle)
+                self.create_subscription(
+                    Twist, f'robot{i}/cmd_vel_nav',
+                    lambda msg, robot_id=str(i): self._on_cmd_vel(msg, robot_id, source="cmd_vel_nav"), qos_profile)
                 self.create_subscription(
                     WebRtcReq, f'robot{i}/webrtc_req',
                     lambda msg, robot_id=str(i): self._on_webrtc_req(msg, robot_id), qos_profile)
@@ -258,8 +284,22 @@ class Go2DriverNode(Node):
             
         return result
 
-    def _on_cmd_vel(self, msg: Twist, robot_id: str) -> None:
+    def _on_cmd_vel(self, msg: Twist, robot_id: str, source: str = "cmd_vel_out") -> None:
         """Callback for movement commands"""
+        now = time.time()
+        if source == "cmd_vel_nav" and (now - self._last_cmd_vel_out_time) < 0.5:
+            return
+
+        if source == "cmd_vel_out":
+            self._last_cmd_vel_out_time = now
+
+        now = time.time()
+        if now - self._last_cmd_vel_log > 1.0:
+            self.get_logger().info(
+                f"{source} rx (robot {robot_id}): x={msg.linear.x:.3f} "
+                f"y={msg.linear.y:.3f} z={msg.angular.z:.3f}"
+            )
+            self._last_cmd_vel_log = now
         self.robot_control_service.handle_cmd_vel(
             msg.linear.x, msg.linear.y, msg.angular.z, 
             robot_id, self.config.obstacle_avoidance

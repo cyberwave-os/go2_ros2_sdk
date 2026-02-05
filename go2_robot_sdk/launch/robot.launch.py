@@ -6,7 +6,7 @@ from typing import List
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import FrontendLaunchDescriptionSource, PythonLaunchDescriptionSource
@@ -139,7 +139,17 @@ class Go2NodeFactory:
     def _load_urdf_content(self, urdf_path: str) -> str:
         """Load URDF file content"""
         with open(urdf_path, 'r') as file:
-            return file.read()
+            urdf_content = file.read()
+
+        # Resolve package:// URLs to absolute file paths to avoid RViz resource lookup issues
+        pkg_prefix = "package://go2_robot_sdk/"
+        if pkg_prefix in urdf_content:
+            urdf_content = urdf_content.replace(
+                pkg_prefix,
+                f"file://{self.config.package_dir}/"
+            )
+
+        return urdf_content
     
     def _create_pointcloud_to_laserscan_node(self, namespace: str = None) -> Node:
         """Create pointcloud to laserscan conversion node"""
@@ -167,17 +177,29 @@ class Go2NodeFactory:
                 name='go2_pointcloud_to_laserscan',
                 remappings=[
                     ('cloud_in', 'point_cloud2'),
-                    ('scan', 'scan'),
+                    ('scan', '/scan'),
                 ],
                 parameters=[{
                     'target_frame': 'base_link',
                     'max_height': 0.5
+                }, {
+                    'qos_overrides': {
+                        '/scan': {
+                            'publisher': {
+                                'reliability': 'best_effort',
+                                'history': 'keep_last',
+                                'depth': 5
+                            }
+                        }
+                    }
                 }],
                 output='screen',
             )
     
     def create_core_nodes(self) -> List[Node]:
         """Create core Go2 robot nodes"""
+        lidar_qos_overrides = self._get_lidar_qos_overrides()
+
         return [
             # Main robot driver (clean architecture)
             Node(
@@ -189,6 +211,8 @@ class Go2NodeFactory:
                     'robot_ip': self.config.robot_ip,
                     'token': self.config.robot_token,
                     'conn_type': self.config.conn_type
+                }, {
+                    'qos_overrides': lidar_qos_overrides
                 }],
             ),
             # LiDAR processing node (new separate package)
@@ -231,12 +255,37 @@ class Go2NodeFactory:
                 }],
             ),
         ]
+
+    def _get_lidar_qos_overrides(self) -> dict:
+        """Build QoS overrides for LiDAR point cloud publishers"""
+        if self.config.conn_mode == 'single':
+            topics = ['/point_cloud2']
+        else:
+            topics = [f'/robot{i}/point_cloud2' for i, _ in enumerate(self.config.robot_ip_list)]
+
+        return {
+            topic: {
+                'publisher': {
+                    'reliability': 'reliable',
+                    'history': 'keep_last',
+                    'depth': 1
+                }
+            }
+            for topic in topics
+        }
     
     def create_teleop_nodes(self) -> List[Node]:
         """Create teleoperation and joystick nodes"""
         use_sim_time = LaunchConfiguration('use_sim_time', default='false')
         with_joystick = LaunchConfiguration('joystick', default='true')
         with_teleop = LaunchConfiguration('teleop', default='true')
+        with_nav2 = LaunchConfiguration('nav2', default='true')
+        enable_twist_mux = IfCondition(
+            PythonExpression([
+                "'", with_teleop, "' == 'true' or '",
+                with_nav2, "' == 'true'"
+            ])
+        )
         
         return [
             # Joystick node
@@ -253,13 +302,15 @@ class Go2NodeFactory:
                 name='go2_teleop_node',
                 condition=IfCondition(with_joystick),
                 parameters=[self.config.config_paths['twist_mux']],
+                remappings=[('cmd_vel', 'cmd_vel_joy')],
             ),
             # Twist multiplexer
             Node(
                 package='twist_mux',
                 executable='twist_mux',
                 output='screen',
-                condition=IfCondition(with_teleop),
+                condition=enable_twist_mux,
+                remappings=[('/cmd_vel_out', 'cmd_vel_out')],
                 parameters=[
                     {'use_sim_time': use_sim_time},
                     self.config.config_paths['twist_mux']
@@ -298,10 +349,10 @@ class Go2NodeFactory:
         
         return [
             # Foxglove Bridge
-            IncludeLaunchDescription(
-                FrontendLaunchDescriptionSource(foxglove_launch),
-                condition=IfCondition(with_foxglove),
-            ),
+            # IncludeLaunchDescription(
+            #     FrontendLaunchDescriptionSource(foxglove_launch),
+            #     condition=IfCondition(with_foxglove),
+            # ),
             # SLAM Toolbox
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
