@@ -17,6 +17,7 @@ from typing import Callable, Optional, Any, Dict, Union
 from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 
 from .crypto.encryption import CryptoUtils, ValidationCrypto, PathCalculator, EncryptionError
+from .h264_optimization import install_h264_patches
 from .http_client import HttpClient, WebRTCHttpError
 from .data_decoder import WebRTCDataDecoder, DataDecodingError
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -72,6 +73,7 @@ class Go2Connection:
         
         # Add video transceiver if video callback provided
         if self.on_video_frame:
+            install_h264_patches()
             self.pc.addTransceiver("video", direction="recvonly")
     
     def on_connection_state_change(self) -> None:
