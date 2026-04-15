@@ -107,6 +107,7 @@ class Go2DriverNode(Node):
                 ('conn_type', conn_type),
                 ('enable_video', True),
                 ('decode_lidar', True),
+                ('lite_subscriptions', False),
                 ('publish_raw_voxel', False),
                 ('obstacle_avoidance', False),
             ]
@@ -121,6 +122,7 @@ class Go2DriverNode(Node):
             conn_type=self.get_parameter('conn_type').get_parameter_value().string_value,
             enable_video=self.get_parameter('enable_video').get_parameter_value().bool_value,
             decode_lidar=self.get_parameter('decode_lidar').get_parameter_value().bool_value,
+            lite_subscriptions=self.get_parameter('lite_subscriptions').get_parameter_value().bool_value,
             publish_raw_voxel=self.get_parameter('publish_raw_voxel').get_parameter_value().bool_value,
             obstacle_avoidance=self.get_parameter('obstacle_avoidance').get_parameter_value().bool_value
         )
@@ -131,6 +133,7 @@ class Go2DriverNode(Node):
         self.get_logger().info(f"Connection mode: {config.conn_mode}")
         self.get_logger().info(f"Enable video: {config.enable_video}")
         self.get_logger().info(f"Decode lidar: {config.decode_lidar}")
+        self.get_logger().info(f"Lite subscriptions: {config.lite_subscriptions}")
         self.get_logger().info(f"Publish raw voxel: {config.publish_raw_voxel}")
         self.get_logger().info(f"Obstacle avoidance: {config.obstacle_avoidance}")
 

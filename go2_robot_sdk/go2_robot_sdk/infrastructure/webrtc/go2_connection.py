@@ -137,8 +137,8 @@ class Go2Connection:
         """Handle robot validation response"""
         try:
             if message.get("data") == "Validation Ok.":
-                # Turn on video
-                self.publish("", "on", "vid")
+                if self.on_video_frame:
+                    self.publish("", "on", "vid")
                 
                 self.validation_result = "SUCCESS"
                 self.robot_validation = "OK"

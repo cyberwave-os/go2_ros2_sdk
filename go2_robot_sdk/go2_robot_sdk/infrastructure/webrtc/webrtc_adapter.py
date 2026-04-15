@@ -52,7 +52,8 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
             
             self.connections[robot_id] = conn
             await conn.connect()
-            await conn.disableTrafficSaving(True)
+            need_lidar_stream = self.config.decode_lidar or self.config.publish_raw_voxel
+            await conn.disableTrafficSaving(need_lidar_stream)
             
             logger.info(f"Connected to robot {robot_id} at {robot_ip}")
             
@@ -172,11 +173,25 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
             except asyncio.QueueEmpty:
                 break
 
+    def _get_subscription_topics(self):
+        """Return subscription topic list based on runtime config."""
+        if not self.config.lite_subscriptions:
+            return RTC_TOPIC.values()
+
+        topics = [
+            RTC_TOPIC["LOW_STATE"],
+            RTC_TOPIC["ROBOTODOM"],
+            RTC_TOPIC["LF_SPORT_MOD_STATE"],
+        ]
+        if self.config.decode_lidar or self.config.publish_raw_voxel:
+            topics.append(RTC_TOPIC["ULIDAR_ARRAY"])
+        return topics
+
     def _on_validated(self, robot_id: str) -> None:
         """Callback after connection validation"""
         try:
             if robot_id in self.connections:
-                for topic in RTC_TOPIC.values():
+                for topic in self._get_subscription_topics():
                     self.connections[robot_id].data_channel.send(
                         json.dumps({"type": "subscribe", "topic": topic}))
             

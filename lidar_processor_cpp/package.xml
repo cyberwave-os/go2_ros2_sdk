@@ -17,6 +17,8 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>go2_interfaces</depend>
   
   <!-- PCL dependencies for point cloud processing -->
   <depend>pcl_ros</depend>

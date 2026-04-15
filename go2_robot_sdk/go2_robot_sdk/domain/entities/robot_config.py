@@ -13,13 +13,15 @@ class RobotConfig:
     conn_type: str
     enable_video: bool
     decode_lidar: bool
+    lite_subscriptions: bool
     publish_raw_voxel: bool
     obstacle_avoidance: bool
     conn_mode: str  # 'single' or 'multi'
 
     @classmethod
-    def from_params(cls, robot_ip: str, token: str, conn_type: str, 
-                   enable_video: bool, decode_lidar: bool, 
+    def from_params(cls, robot_ip: str, token: str, conn_type: str,
+                   enable_video: bool, decode_lidar: bool,
+                   lite_subscriptions: bool,
                    publish_raw_voxel: bool, obstacle_avoidance: bool):
         """Создание конфигурации из параметров"""
         robot_ip_list = robot_ip.replace(" ", "").split(",")
@@ -32,6 +34,7 @@ class RobotConfig:
             conn_type=conn_type,
             enable_video=enable_video,
             decode_lidar=decode_lidar,
+            lite_subscriptions=lite_subscriptions,
             publish_raw_voxel=publish_raw_voxel,
             obstacle_avoidance=obstacle_avoidance,
             conn_mode=conn_mode

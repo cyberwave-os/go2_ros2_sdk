@@ -86,12 +86,39 @@ class Go2NodeFactory:
             DeclareLaunchArgument('foxglove', default_value='true', description='Launch Foxglove Bridge'),
             DeclareLaunchArgument('joystick', default_value='true', description='Launch joystick'),
             DeclareLaunchArgument('teleop', default_value='true', description='Launch teleoperation'),
+            DeclareLaunchArgument('enable_video', default_value='true', description='Enable WebRTC video stream'),
+            DeclareLaunchArgument('decode_lidar', default_value='true', description='Decode lidar data from WebRTC stream'),
+            DeclareLaunchArgument('publish_raw_voxel', default_value='false', description='Publish compressed voxel topic'),
+            DeclareLaunchArgument('lite_subscriptions', default_value='false', description='Subscribe only to required RTC topics'),
+            DeclareLaunchArgument('enable_tts', default_value='true', description='Launch TTS node'),
+            DeclareLaunchArgument('enable_scan_converter', default_value='true', description='Launch pointcloud_to_laserscan node'),
+            DeclareLaunchArgument(
+                'voxel_intensity_threshold',
+                default_value='0.0',
+                description='Intensity threshold for voxel_decoder_node'
+            ),
+            DeclareLaunchArgument(
+                'voxel_deduplicate_points',
+                default_value='false',
+                description='Enable deduplication in voxel_decoder_node'
+            ),
+            DeclareLaunchArgument(
+                'use_cpp_voxel_decoder',
+                default_value='false',
+                description='Use lidar_processor_cpp voxel_decoder_node for compressed voxel decode to point_cloud2'
+            ),
+            DeclareLaunchArgument(
+                'use_cpp_lidar',
+                default_value='false',
+                description='Use C++ lidar_processor_cpp nodes instead of Python lidar_processor nodes'
+            ),
         ]
     
     def create_robot_state_nodes(self) -> List[Node]:
         """Create robot state publisher nodes"""
         nodes = []
         use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+        with_scan_converter = LaunchConfiguration('enable_scan_converter', default='true')
         
         if self.config.conn_mode == 'single':
             # Single robot configuration
@@ -109,7 +136,7 @@ class Go2NodeFactory:
                     }],
                     arguments=[self.config.config_paths['urdf']]
                 ),
-                self._create_pointcloud_to_laserscan_node()
+                self._create_pointcloud_to_laserscan_node(condition=IfCondition(with_scan_converter))
             ])
         else:
             # Multi-robot configuration
@@ -131,7 +158,7 @@ class Go2NodeFactory:
                         }],
                         arguments=[self.config.config_paths['urdf']]
                     ),
-                    self._create_pointcloud_to_laserscan_node(f"robot{i}")
+                    self._create_pointcloud_to_laserscan_node(f"robot{i}", condition=IfCondition(with_scan_converter))
                 ])
         
         return nodes
@@ -151,7 +178,7 @@ class Go2NodeFactory:
 
         return urdf_content
     
-    def _create_pointcloud_to_laserscan_node(self, namespace: str = None) -> Node:
+    def _create_pointcloud_to_laserscan_node(self, namespace: str = None, condition=None) -> Node:
         """Create pointcloud to laserscan conversion node"""
         if namespace:
             # Multi-robot setup
@@ -159,6 +186,7 @@ class Go2NodeFactory:
                 package='pointcloud_to_laserscan',
                 executable='pointcloud_to_laserscan_node',
                 name=f'{namespace}_pointcloud_to_laserscan',
+                condition=condition,
                 remappings=[
                     ('cloud_in', f'{namespace}/point_cloud2'),
                     ('scan', f'{namespace}/scan'),
@@ -175,6 +203,7 @@ class Go2NodeFactory:
                 package='pointcloud_to_laserscan',
                 executable='pointcloud_to_laserscan_node',
                 name='go2_pointcloud_to_laserscan',
+                condition=condition,
                 remappings=[
                     ('cloud_in', 'point_cloud2'),
                     ('scan', '/scan'),
@@ -199,6 +228,40 @@ class Go2NodeFactory:
     def create_core_nodes(self) -> List[Node]:
         """Create core Go2 robot nodes"""
         lidar_qos_overrides = self._get_lidar_qos_overrides()
+        enable_video = LaunchConfiguration('enable_video')
+        decode_lidar = LaunchConfiguration('decode_lidar')
+        publish_raw_voxel = LaunchConfiguration('publish_raw_voxel')
+        lite_subscriptions = LaunchConfiguration('lite_subscriptions')
+        voxel_intensity_threshold = LaunchConfiguration('voxel_intensity_threshold')
+        voxel_deduplicate_points = LaunchConfiguration('voxel_deduplicate_points')
+        use_cpp_voxel_decoder = LaunchConfiguration('use_cpp_voxel_decoder')
+        use_cpp_lidar = LaunchConfiguration('use_cpp_lidar')
+        with_tts = LaunchConfiguration('enable_tts', default='true')
+
+        # When C++ voxel decoder is active, disable Python-side decode and
+        # enable raw voxel forwarding so the C++ node receives the data.
+        effective_decode_lidar = PythonExpression([
+            "'false' if '", use_cpp_voxel_decoder, "' == 'true' else '", decode_lidar, "'"
+        ])
+        effective_publish_raw_voxel = PythonExpression([
+            "'true' if '", use_cpp_voxel_decoder, "' == 'true' else '", publish_raw_voxel, "'"
+        ])
+
+        use_python_lidar = IfCondition(
+            PythonExpression([
+                "'",
+                use_cpp_lidar,
+                "' == 'false' and '",
+                use_cpp_voxel_decoder,
+                "' == 'false'",
+            ])
+        )
+        use_cpp_lidar_condition = IfCondition(
+            PythonExpression(["'", use_cpp_lidar, "' == 'true'"])
+        )
+        use_cpp_voxel_decoder_condition = IfCondition(
+            PythonExpression(["'", use_cpp_voxel_decoder, "' == 'true'"])
+        )
 
         return [
             # Main robot driver (clean architecture)
@@ -210,27 +273,77 @@ class Go2NodeFactory:
                 parameters=[{
                     'robot_ip': self.config.robot_ip,
                     'token': self.config.robot_token,
-                    'conn_type': self.config.conn_type
+                    'conn_type': self.config.conn_type,
+                    'enable_video': enable_video,
+                    'decode_lidar': effective_decode_lidar,
+                    'publish_raw_voxel': effective_publish_raw_voxel,
+                    'lite_subscriptions': lite_subscriptions,
                 }, {
                     'qos_overrides': lidar_qos_overrides
                 }],
             ),
-            # LiDAR processing node (new separate package)
+            # C++ voxel decoder (replaces Python WASM decode path)
+            Node(
+                package='lidar_processor_cpp',
+                executable='voxel_decoder_node',
+                name='voxel_decoder_node',
+                condition=use_cpp_voxel_decoder_condition,
+                parameters=[{
+                    'input_topic': '/utlidar/voxel_map_compressed',
+                    'output_topic': 'point_cloud2',
+                    'frame_id': 'odom',
+                    'intensity_threshold': voxel_intensity_threshold,
+                    'deduplicate_points': voxel_deduplicate_points,
+                }],
+            ),
+            # LiDAR processing node — Python (legacy)
             Node(
                 package='lidar_processor',
                 executable='lidar_to_pointcloud',
                 name='lidar_to_pointcloud',
+                condition=use_python_lidar,
                 parameters=[{
                     'robot_ip_lst': self.config.robot_ip_list,
                     'map_name': self.config.map_name,
                     'map_save': self.config.save_map
                 }],
             ),
-            # Advanced point cloud aggregator
+            # Advanced point cloud aggregator — Python (legacy)
             Node(
                 package='lidar_processor',
                 executable='pointcloud_aggregator',
                 name='pointcloud_aggregator',
+                condition=use_python_lidar,
+                parameters=[{
+                    'max_range': 20.0,
+                    'min_range': 0.1,
+                    'height_filter_min': -2.0,
+                    'height_filter_max': 3.0,
+                    'downsample_rate': 5,
+                    'publish_rate': 10.0
+                }],
+            ),
+            # LiDAR processing node — C++ implementation
+            Node(
+                package='lidar_processor_cpp',
+                executable='lidar_to_pointcloud_node',
+                name='lidar_to_pointcloud',
+                condition=use_cpp_lidar_condition,
+                remappings=[
+                    ('/robot0/point_cloud2', '/point_cloud2'),
+                ] if self.config.conn_mode == 'single' else [],
+                parameters=[{
+                    'robot_ip_lst': self.config.robot_ip_list,
+                    'map_name': self.config.map_name,
+                    'map_save': self.config.save_map
+                }],
+            ),
+            # Advanced point cloud aggregator — C++ implementation
+            Node(
+                package='lidar_processor_cpp',
+                executable='pointcloud_aggregator_node',
+                name='pointcloud_aggregator',
+                condition=use_cpp_lidar_condition,
                 parameters=[{
                     'max_range': 20.0,
                     'min_range': 0.1,
@@ -245,6 +358,7 @@ class Go2NodeFactory:
                 package='speech_processor',
                 executable='tts_node',
                 name='tts_node',
+                condition=IfCondition(with_tts),
                 parameters=[{
                     'api_key': os.getenv('ELEVENLABS_API_KEY', ''),
                     'provider': 'elevenlabs',
@@ -266,7 +380,7 @@ class Go2NodeFactory:
         return {
             topic: {
                 'publisher': {
-                    'reliability': 'reliable',
+                    'reliability': 'best_effort',
                     'history': 'keep_last',
                     'depth': 1
                 }
