@@ -15,19 +15,22 @@ from .presentation.go2_driver_node import Go2DriverNode
 
 
 async def run_robot_connections(node: Go2DriverNode):
-    """Start robot connections"""
+    """Start robot connections with automatic reconnection."""
     try:
-        # Connect to robots
-        await node.connect_robots()
+        if node.config.conn_type != 'webrtc':
+            await node.connect_robots()
 
-        # Start control loops for each robot
         tasks = []
         for i in range(len(node.config.robot_ip_list)):
             robot_id = str(i)
-            task = asyncio.create_task(node.run_robot_control_loop(robot_id))
-            tasks.append(task)
+            if node.config.conn_type == 'webrtc':
+                tasks.append(asyncio.create_task(
+                    node.webrtc_adapter.connect_with_retry(robot_id)
+                ))
+            tasks.append(asyncio.create_task(
+                node.run_robot_control_loop(robot_id)
+            ))
 
-        # Wait for all tasks to complete
         await asyncio.gather(*tasks)
 
     except Exception as e:
@@ -106,7 +109,7 @@ async def main_async():
         try:
             # Disconnect from robots
             if 'node' in locals() and hasattr(node, 'webrtc_adapter'):
-                for robot_id in node.webrtc_adapter.connections:
+                for robot_id in list(node.webrtc_adapter.connections):
                     await node.webrtc_adapter.disconnect(robot_id)
             
             # Close unfinished tasks

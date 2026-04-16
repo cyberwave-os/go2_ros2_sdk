@@ -79,6 +79,16 @@ class Go2DriverNode(Node):
             event_loop=self.event_loop
         )
         
+        self.webrtc_adapter.data_stall_timeout_sec = (
+            self.get_parameter('data_stall_timeout_sec').get_parameter_value().double_value
+        )
+        self.webrtc_adapter.max_reconnect_delay_sec = (
+            self.get_parameter('max_reconnect_delay_sec').get_parameter_value().double_value
+        )
+        self.webrtc_adapter.reconnect_cooldown_sec = (
+            self.get_parameter('reconnect_cooldown_sec').get_parameter_value().double_value
+        )
+
         self.robot_control_service = RobotControlService(self.webrtc_adapter)
         
         # Set callback for data
@@ -110,6 +120,9 @@ class Go2DriverNode(Node):
                 ('lite_subscriptions', False),
                 ('publish_raw_voxel', False),
                 ('obstacle_avoidance', False),
+                ('data_stall_timeout_sec', 15.0),
+                ('max_reconnect_delay_sec', 60.0),
+                ('reconnect_cooldown_sec', 45.0),
             ]
         )
 
@@ -374,14 +387,22 @@ class Go2DriverNode(Node):
         pass
 
     async def connect_robots(self) -> None:
-        """Connect to robots"""
+        """Connect to robots (non-WebRTC paths only).
+
+        For WebRTC, main.py uses webrtc_adapter.connect_with_retry() which
+        provides automatic reconnection with exponential backoff.
+        """
         if self.config.conn_type == 'webrtc':
-            for i, robot_ip in enumerate(self.config.robot_ip_list):
-                try:
-                    await self.webrtc_adapter.connect(str(i))
-                except Exception as e:
-                    self.get_logger().error(f"Failed to connect to robot {i}: {e}")
-                    raise
+            self.get_logger().info(
+                "WebRTC connections managed by connect_with_retry loop"
+            )
+            return
+        for i, robot_ip in enumerate(self.config.robot_ip_list):
+            try:
+                await self.webrtc_adapter.connect(str(i))
+            except Exception as e:
+                self.get_logger().error(f"Failed to connect to robot {i}: {e}")
+                raise
 
     async def run_robot_control_loop(self, robot_id: str) -> None:
         """Main robot control loop"""

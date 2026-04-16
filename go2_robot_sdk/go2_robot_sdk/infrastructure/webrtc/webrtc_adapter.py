@@ -4,7 +4,8 @@
 import asyncio
 import json
 import logging
-from typing import Callable, Dict, Any
+import time
+from typing import Callable, Dict, Any, Optional
 
 from ...domain.interfaces import IRobotDataReceiver, IRobotController
 from ...domain.entities import RobotData, RobotConfig
@@ -25,6 +26,15 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
         self.webrtc_msgs = asyncio.Queue()
         self.on_validated_callback = on_validated_callback
         self.on_video_frame_callback = on_video_frame_callback
+
+        # Reconnection tunables (can be overridden by the driver node)
+        self.data_stall_timeout_sec: float = 15.0
+        self.max_reconnect_delay_sec: float = 60.0
+        self.reconnect_cooldown_sec: float = 45.0
+
+        # Per-robot last-data-received monotonic timestamp
+        self._last_data_recv_ts: Dict[str, float] = {}
+
         # Store the event loop (passed from main thread or detect current)
         if event_loop:
             self.main_loop = event_loop
@@ -47,6 +57,7 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
                 on_validated=self._on_validated,
                 on_message=self._on_data_channel_message,
                 on_video_frame=self.on_video_frame_callback if self.config.enable_video else None,
+                on_disconnected=self._on_connection_lost,
                 decode_lidar=self.config.decode_lidar,
             )
             
@@ -75,6 +86,106 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
                 logger.info(f"Disconnected from robot {robot_id}")
             except Exception as e:
                 logger.error(f"Error disconnecting from robot {robot_id}: {e}")
+
+    # ------------------------------------------------------------------
+    # Reconnection loop
+    # ------------------------------------------------------------------
+
+    async def connect_with_retry(self, robot_id: str) -> None:
+        """Connect to a robot and automatically reconnect on failure.
+
+        Mirrors the backoff strategy from go2_native_runtime_video_node:
+        initial 1s delay, 1.8x multiplier, capped at max_reconnect_delay_sec,
+        with a longer cooldown after 5 consecutive quick failures.
+        """
+        reconnect_delay = 1.0
+        consecutive_failures = 0
+
+        while True:
+            session_start = time.monotonic()
+            should_backoff = False
+            try:
+                logger.info(f"[reconnect] Connecting to robot {robot_id} ...")
+                await self.connect(robot_id)
+
+                conn = self.connections.get(robot_id)
+                if conn is None:
+                    raise RuntimeError("connection vanished after connect()")
+
+                self._last_data_recv_ts[robot_id] = time.monotonic()
+
+                logger.info(f"[reconnect] Robot {robot_id} connected, monitoring session")
+
+                # Wait until the connection drops (PC/DC event) or data stalls.
+                await self._wait_for_session_end(robot_id, conn)
+
+                session_uptime = time.monotonic() - session_start
+                if session_uptime >= 20.0:
+                    consecutive_failures = 0
+                    reconnect_delay = 1.0
+
+            except SystemExit:
+                raise
+            except Exception as exc:
+                logger.warning(f"[reconnect] Robot {robot_id} session error: {exc}")
+                should_backoff = True
+            finally:
+                await self._safe_disconnect(robot_id)
+
+            if should_backoff:
+                consecutive_failures += 1
+                reconnect_delay = min(
+                    self.max_reconnect_delay_sec, reconnect_delay * 1.8
+                )
+                if consecutive_failures >= 5:
+                    logger.error(
+                        f"[reconnect] Robot {robot_id}: {consecutive_failures} consecutive "
+                        f"failures, cooling down for {self.reconnect_cooldown_sec:.0f}s"
+                    )
+                    await asyncio.sleep(self.reconnect_cooldown_sec)
+                    reconnect_delay = max(reconnect_delay, 10.0)
+                    consecutive_failures = 0
+
+            logger.info(
+                f"[reconnect] Robot {robot_id}: reconnecting in {reconnect_delay:.1f}s"
+            )
+            await asyncio.sleep(reconnect_delay)
+
+    async def _wait_for_session_end(
+        self, robot_id: str, conn: Go2Connection
+    ) -> None:
+        """Block until the connection dies or data flow stalls."""
+        while True:
+            # Check if the PC/DC signaled disconnection
+            try:
+                await asyncio.wait_for(
+                    conn._disconnected_event.wait(), timeout=0.5
+                )
+                logger.warning(
+                    f"[reconnect] Robot {robot_id}: disconnected event fired"
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            # Data-flow stall detection
+            if self.data_stall_timeout_sec > 0:
+                elapsed = time.monotonic() - self._last_data_recv_ts.get(
+                    robot_id, time.monotonic()
+                )
+                if elapsed > self.data_stall_timeout_sec:
+                    raise RuntimeError(
+                        f"no data received for >{self.data_stall_timeout_sec:.0f}s"
+                    )
+
+    async def _safe_disconnect(self, robot_id: str) -> None:
+        """Tear down a connection, swallowing errors."""
+        try:
+            await self.disconnect(robot_id)
+        except Exception as exc:
+            logger.debug(f"[reconnect] cleanup error for {robot_id}: {exc}")
+
+    # ------------------------------------------------------------------
 
     def set_data_callback(self, callback: Callable[[RobotData], None]) -> None:
         """Set callback for data reception"""
@@ -201,14 +312,17 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
         except Exception as e:
             logger.error(f"Error in validated callback: {e}")
 
+    def _on_connection_lost(self, robot_id: str, reason: str) -> None:
+        """Called by Go2Connection when the PC or data channel dies."""
+        logger.warning(f"Connection to robot {robot_id} lost: {reason}")
+
     def _on_data_channel_message(self, _, msg: Dict[str, Any], robot_id: str) -> None:
         """Handle incoming data channel messages"""
         try:
+            self._last_data_recv_ts[robot_id] = time.monotonic()
+
             if self.data_callback:
-                # Создаем объект RobotData для передачи в callback
-                # Фактическая обработка будет в RobotDataService
-                robot_data = RobotData(robot_id=robot_id, timestamp=0.0)
-                self.data_callback(msg, robot_id)  # Передаем сырые данные для обработки
+                self.data_callback(msg, robot_id)
                 
         except Exception as e:
             logger.error(f"Error processing data channel message: {e}") 

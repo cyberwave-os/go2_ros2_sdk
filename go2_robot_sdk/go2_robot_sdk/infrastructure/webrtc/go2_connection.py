@@ -42,6 +42,7 @@ class Go2Connection:
         on_message: Optional[Callable] = None,
         on_open: Optional[Callable] = None,
         on_video_frame: Optional[Callable] = None,
+        on_disconnected: Optional[Callable] = None,
         decode_lidar: bool = True,
     ):
         self.pc = RTCPeerConnection()
@@ -56,7 +57,11 @@ class Go2Connection:
         self.on_message = on_message
         self.on_open = on_open
         self.on_video_frame = on_video_frame
+        self.on_disconnected = on_disconnected
         self.decode_lidar = decode_lidar
+        
+        # Disconnection signaling — set when the PC or data channel dies.
+        self._disconnected_event = asyncio.Event()
         
         # Initialize components
         self.http_client = HttpClient(timeout=10.0)
@@ -66,6 +71,7 @@ class Go2Connection:
         self.data_channel = self.pc.createDataChannel("data", id=0)
         self.data_channel.on("open", self.on_data_channel_open)
         self.data_channel.on("message", self.on_data_channel_message)
+        self.data_channel.on("close", self._on_data_channel_close)
         
         # Setup peer connection events
         self.pc.on("track", self.on_track)
@@ -76,13 +82,30 @@ class Go2Connection:
             install_h264_patches()
             self.pc.addTransceiver("video", direction="recvonly")
     
+    @property
+    def is_alive(self) -> bool:
+        """True when the data channel is open and the peer connection is healthy."""
+        return (
+            self.data_channel.readyState == "open"
+            and self.pc.connectionState in ("connected", "new", "connecting")
+        )
+
     def on_connection_state_change(self) -> None:
         """Handle peer connection state changes"""
-        logger.info(f"Connection state is {self.pc.connectionState}")
-        
-        # Note: Validation is handled after successful WebRTC connection
-        # in the original implementation, not here
+        state = self.pc.connectionState
+        logger.info(f"Connection state is {state}")
+        if state in ("failed", "closed"):
+            self._disconnected_event.set()
+            if self.on_disconnected:
+                self.on_disconnected(self.robot_num, state)
     
+    def _on_data_channel_close(self) -> None:
+        """Handle data channel close — signals that the SCTP layer died."""
+        logger.warning("Data channel closed")
+        self._disconnected_event.set()
+        if self.on_disconnected:
+            self.on_disconnected(self.robot_num, "datachannel_closed")
+
     def on_data_channel_open(self) -> None:
         """Handle data channel open event"""
         logger.info("Data channel is open")
