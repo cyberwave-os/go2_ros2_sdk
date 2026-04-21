@@ -5,7 +5,7 @@ import logging
 import math
 from typing import Dict, Any
 
-from ...domain.entities import RobotData, RobotState, IMUData, OdometryData, JointData, LidarData
+from ...domain.entities import RobotData, RobotState, IMUData, OdometryData, JointData, LidarData, BatteryData
 from ...domain.interfaces import IRobotDataPublisher
 from ...domain.constants import RTC_TOPIC
 
@@ -40,6 +40,8 @@ class RobotDataService:
             elif topic == RTC_TOPIC["LOW_STATE"]:
                 self._process_low_state(msg, robot_data)
                 self.publisher.publish_joint_state(robot_data)
+                if robot_data.battery_data is not None:
+                    self.publisher.publish_battery_state(robot_data)
 
         except Exception as e:
             logger.error(f"Error processing WebRTC message: {e}")
@@ -134,12 +136,20 @@ class RobotDataService:
             logger.error(f"Error processing sport mode state: {e}")
 
     def _process_low_state(self, msg: Dict[str, Any], robot_data: RobotData) -> None:
-        """Process low state data"""
+        """Process low state data (joints + battery)"""
         try:
             low_state_data = msg['data']
             robot_data.joint_data = JointData(
                 motor_state=low_state_data['motor_state']
             )
+            bms = low_state_data.get("bms_state")
+            if isinstance(bms, dict):
+                robot_data.battery_data = BatteryData(
+                    voltage=float(low_state_data.get("power_v", 0.0)),
+                    state_of_charge=float(bms.get("soc", 0.0)),
+                    temperature=float(low_state_data.get("temperature_ntc1", 0.0)),
+                    charge_cycles=int(bms.get("cycle", 0)),
+                )
         except Exception as e:
             logger.error(f"Error processing low state: {e}")
 

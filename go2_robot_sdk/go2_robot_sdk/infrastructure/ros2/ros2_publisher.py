@@ -9,7 +9,7 @@ from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 from go2_interfaces.msg import Go2State, IMU
 from go2_interfaces.msg import VoxelMapCompressed
-from sensor_msgs.msg import PointCloud2, PointField, JointState
+from sensor_msgs.msg import PointCloud2, PointField, JointState, BatteryState
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from nav_msgs.msg import Odometry
@@ -265,4 +265,27 @@ class ROS2Publisher(IRobotDataPublisher):
             self.publishers['voxel'][robot_idx].publish(voxel_msg)
 
         except Exception as e:
-            logger.error(f"Error publishing voxel data: {e}") 
+            logger.error(f"Error publishing voxel data: {e}")
+
+    def publish_battery_state(self, robot_data: RobotData) -> None:
+        """Publish battery state as sensor_msgs/BatteryState"""
+        if not robot_data.battery_data:
+            return
+
+        try:
+            robot_idx = int(robot_data.robot_id)
+            bat = robot_data.battery_data
+
+            msg = BatteryState()
+            msg.header.stamp = self.node.get_clock().now().to_msg()
+            msg.voltage = bat.voltage
+            msg.percentage = bat.state_of_charge / 100.0
+            msg.temperature = bat.temperature
+            msg.present = True
+            msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_LION
+            msg.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+
+            self.publishers['battery'][robot_idx].publish(msg)
+
+        except Exception as e:
+            logger.error(f"Error publishing battery state: {e}") 

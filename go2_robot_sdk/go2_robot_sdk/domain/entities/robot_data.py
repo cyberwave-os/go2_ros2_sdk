@@ -67,6 +67,15 @@ class CameraData:
 
 
 @dataclass
+class BatteryData:
+    """Battery / BMS state"""
+    voltage: float = 0.0
+    state_of_charge: float = 0.0
+    temperature: float = 0.0
+    charge_cycles: int = 0
+
+
+@dataclass
 class RobotData:
     """Aggregated robot data container"""
     robot_id: str
@@ -76,4 +85,5 @@ class RobotData:
     odometry_data: Optional[OdometryData] = None
     joint_data: Optional[JointData] = None
     lidar_data: Optional[LidarData] = None
-    camera_data: Optional[CameraData] = None 
+    camera_data: Optional[CameraData] = None
+    battery_data: Optional[BatteryData] = None 
