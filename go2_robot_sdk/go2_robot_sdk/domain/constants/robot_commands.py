@@ -53,4 +53,12 @@ ROBOT_CMD = {
     "OnesidedStep": 1303,
     "CrossStep": 1302,
     "Handstand": 1301,
+}
+
+# Obstacle avoidance API commands (topic: rt/api/obstacles_avoid/request)
+OBSTACLE_AVOID_CMD = {
+    "SwitchSet": 1001,
+    "SwitchGet": 1002,
+    "Move": 1003,
+    "UseRemoteCommandFromApi": 1004,
 } 
