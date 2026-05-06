@@ -341,6 +341,18 @@ class Go2DriverNode(Node):
         """Callback after robot validation"""
         self.get_logger().info(f"Robot {robot_id} validated and ready")
 
+        if self.config.obstacle_avoidance:
+            self.get_logger().info(
+                f"Obstacle avoidance enabled — sending SwitchSet + "
+                f"UseRemoteCommandFromApi to robot {robot_id}"
+            )
+            try:
+                self.robot_control_service.set_obstacle_avoidance(True, robot_id)
+            except Exception as e:
+                self.get_logger().error(
+                    f"Failed to initialize obstacle avoidance on robot {robot_id}: {e}"
+                )
+
     def _on_robot_data_received(self, msg: Dict[str, Any], robot_id: str) -> None:
         """Callback for receiving data from robot"""
         self.robot_data_service.process_webrtc_message(msg, robot_id)

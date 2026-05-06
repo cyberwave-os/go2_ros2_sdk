@@ -139,6 +139,31 @@ The `robot.launch.py` code starts many services/nodes simultaneously, including
 
 When you run `robot.launch.py`, `rviz` will fire up, lidar data will begin to accumulate, the front color camera data will be displayed too (typically after 4 seconds), and your dog will be waiting for commands from your joystick (e.g. a X-box controller). You can then steer the dog through your house, e.g., and collect LIDAR mapping data. 
 
+### Obstacle Avoidance
+
+The Go2's firmware provides a native obstacle avoidance subsystem that uses its onboard ultrasonic and LiDAR sensors. When enabled, `cmd_vel` velocity commands are routed through the firmware's obstacle detection pipeline instead of the standard sport API, so the robot will refuse to move into detected obstacles.
+
+To enable obstacle avoidance, set the `obstacle_avoidance` ROS parameter to `true`:
+
+```shell
+ros2 launch go2_robot_sdk robot.launch.py obstacle_avoidance:=true
+```
+
+Or set the `GO2_OBSTACLE_AVOIDANCE` environment variable before launching:
+
+```shell
+export GO2_OBSTACLE_AVOIDANCE=true
+```
+
+When enabled, the driver automatically:
+1. Enables the OA subsystem on the robot (`SwitchSet`, API 1001)
+2. Configures the OA subsystem to accept API commands (`UseRemoteCommandFromApi`, API 1004)
+3. Routes all `cmd_vel` velocity commands through `api/obstacles_avoid/request` (API 1003, mode 0) instead of `api/sport/request` (API 1008)
+
+This is fully compatible with Nav2 autonomous navigation — the firmware attenuates velocity commands that would cause a collision, and Nav2's local planner adapts accordingly.
+
+Non-velocity sport commands (sit, stand, recovery stand, etc.) continue to use the sport API regardless of this setting.
+
 ### SLAM and Nav2
 
 ![Simplified Rviz Display](https://github.com/user-attachments/assets/74a7c07c-2c2d-4022-9a23-94407f2c2a06)
