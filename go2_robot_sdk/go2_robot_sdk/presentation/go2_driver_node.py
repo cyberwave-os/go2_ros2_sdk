@@ -17,9 +17,9 @@ from rcl_interfaces.msg import SetParametersResult
 from tf2_ros import TransformBroadcaster
 
 from geometry_msgs.msg import Twist, PoseStamped
-from go2_interfaces.msg import Go2State, IMU
+from go2_interfaces.msg import Go2State
 from go2_interfaces.msg import LowState, VoxelMapCompressed, WebRtcReq
-from sensor_msgs.msg import PointCloud2, JointState, Joy, Image, CameraInfo, BatteryState
+from sensor_msgs.msg import Imu, PointCloud2, JointState, Joy, Image, CameraInfo, BatteryState
 from nav_msgs.msg import Odometry
 
 from ..domain.entities import RobotConfig, RobotData, CameraData
@@ -211,7 +211,7 @@ class Go2DriverNode(Node):
             publishers['odometry'].append(
                 self.create_publisher(Odometry, odom_topic, qos_profile))
             publishers['imu'].append(
-                self.create_publisher(IMU, imu_topic, qos_profile))
+                self.create_publisher(Imu, imu_topic, qos_profile))
 
             if self.config.enable_video:
                 publishers['camera'].append(
