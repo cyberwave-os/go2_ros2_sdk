@@ -7,9 +7,9 @@ import logging
 from rclpy.node import Node
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
-from go2_interfaces.msg import Go2State, IMU
+from go2_interfaces.msg import Go2State
 from go2_interfaces.msg import VoxelMapCompressed
-from sensor_msgs.msg import PointCloud2, PointField, JointState, BatteryState
+from sensor_msgs.msg import Imu, PointCloud2, PointField, JointState, BatteryState
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
 from nav_msgs.msg import Odometry
@@ -164,17 +164,39 @@ class ROS2Publisher(IRobotDataPublisher):
             
             self.publishers['robot_state'][robot_idx].publish(go2_state)
 
-            # Publish IMU
+            # Publish sensor_msgs/Imu with header so downstream nodes
+            # (RTAB-Map, robot_localization, etc.) can interpolate properly.
             if robot_data.imu_data:
-                imu = IMU()
+                imu_msg = Imu()
+                imu_msg.header.stamp = self.node.get_clock().now().to_msg()
+                imu_msg.header.frame_id = "imu"
+
                 imu_data = robot_data.imu_data
-                imu.quaternion = list(map(float, imu_data.quaternion))
-                imu.accelerometer = list(map(float, imu_data.accelerometer))
-                imu.gyroscope = list(map(float, imu_data.gyroscope))
-                imu.rpy = list(map(float, imu_data.rpy))
-                imu.temperature = imu_data.temperature
-                
-                self.publishers['imu'][robot_idx].publish(imu)
+                q = list(map(float, imu_data.quaternion))
+                if len(q) >= 4:
+                    imu_msg.orientation.w = q[0]
+                    imu_msg.orientation.x = q[1]
+                    imu_msg.orientation.y = q[2]
+                    imu_msg.orientation.z = q[3]
+
+                g = list(map(float, imu_data.gyroscope))
+                if len(g) >= 3:
+                    imu_msg.angular_velocity.x = g[0]
+                    imu_msg.angular_velocity.y = g[1]
+                    imu_msg.angular_velocity.z = g[2]
+
+                a = list(map(float, imu_data.accelerometer))
+                if len(a) >= 3:
+                    imu_msg.linear_acceleration.x = a[0]
+                    imu_msg.linear_acceleration.y = a[1]
+                    imu_msg.linear_acceleration.z = a[2]
+
+                for idx in (0, 4, 8):
+                    imu_msg.orientation_covariance[idx] = 1e-2
+                    imu_msg.angular_velocity_covariance[idx] = 1e-3
+                    imu_msg.linear_acceleration_covariance[idx] = 1e-2
+
+                self.publishers['imu'][robot_idx].publish(imu_msg)
 
         except Exception as e:
             logger.error(f"Error publishing robot state: {e}")
