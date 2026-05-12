@@ -107,6 +107,10 @@ async def main_async():
     finally:
         # Resource cleanup
         try:
+            # Stop cmd_vel watchdog and send final zero velocity
+            if 'node' in locals() and hasattr(node, 'stop_cmd_vel_watchdog'):
+                node.stop_cmd_vel_watchdog()
+
             # Disconnect from robots
             if 'node' in locals() and hasattr(node, 'webrtc_adapter'):
                 for robot_id in list(node.webrtc_adapter.connections):
