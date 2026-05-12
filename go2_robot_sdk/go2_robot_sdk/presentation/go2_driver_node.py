@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import os
+import threading
 import time
 from typing import Dict, Any
 
@@ -102,6 +103,26 @@ class Go2DriverNode(Node):
         self._last_cmd_vel_log = 0.0
         self._last_cmd_vel_out_time = 0.0
 
+        # cmd_vel timeout watchdog — sends Move(0,0,0) to the robot when no
+        # cmd_vel is received within the timeout window.  Uses a dedicated
+        # thread so it fires reliably even when the ROS2 executor is starved
+        # on resource-constrained hardware (e.g. Jetson).
+        self._cmd_vel_timeout = max(
+            0.05,
+            self.get_parameter('cmd_vel_timeout_sec').get_parameter_value().double_value,
+        )
+        self._cmd_vel_lock = threading.Lock()
+        self._last_cmd_vel_time: float | None = None
+        self._last_cmd_vel_nonzero = False
+        self._cmd_vel_watchdog_shutdown = threading.Event()
+        self._cmd_vel_watchdog_thread = threading.Thread(
+            target=self._cmd_vel_watchdog_loop, daemon=True
+        )
+        self._cmd_vel_watchdog_thread.start()
+        self.get_logger().info(
+            f"cmd_vel timeout watchdog started (timeout={self._cmd_vel_timeout:.2f}s)"
+        )
+
     def _setup_configuration(self) -> RobotConfig:
         """Configuration setup"""
         robot_ip = os.getenv('ROBOT_IP', os.getenv('GO2_IP', ''))
@@ -120,6 +141,7 @@ class Go2DriverNode(Node):
                 ('lite_subscriptions', False),
                 ('publish_raw_voxel', False),
                 ('obstacle_avoidance', False),
+                ('cmd_vel_timeout_sec', 0.25),
                 ('data_stall_timeout_sec', 15.0),
                 ('max_reconnect_delay_sec', 60.0),
                 ('reconnect_cooldown_sec', 45.0),
@@ -315,6 +337,15 @@ class Go2DriverNode(Node):
         if source == "cmd_vel_out":
             self._last_cmd_vel_out_time = now
 
+        is_nonzero = (
+            abs(msg.linear.x) > 1e-6
+            or abs(msg.linear.y) > 1e-6
+            or abs(msg.angular.z) > 1e-6
+        )
+        with self._cmd_vel_lock:
+            self._last_cmd_vel_time = now
+            self._last_cmd_vel_nonzero = is_nonzero
+
         now = time.time()
         if now - self._last_cmd_vel_log > 1.0:
             self.get_logger().info(
@@ -387,6 +418,38 @@ class Go2DriverNode(Node):
             except Exception as e:
                 logger.error(f"Error processing video frame: {e}")
                 break
+
+    def _cmd_vel_watchdog_loop(self) -> None:
+        """Background thread: send zero velocity when cmd_vel goes silent."""
+        while not self._cmd_vel_watchdog_shutdown.is_set():
+            with self._cmd_vel_lock:
+                last_t = self._last_cmd_vel_time
+                nonzero = self._last_cmd_vel_nonzero
+
+            if last_t is not None and nonzero:
+                elapsed = time.time() - last_t
+                if elapsed > self._cmd_vel_timeout:
+                    self.robot_control_service.handle_cmd_vel(
+                        0.0, 0.0, 0.0, "0", self.config.obstacle_avoidance
+                    )
+                    with self._cmd_vel_lock:
+                        self._last_cmd_vel_nonzero = False
+                    self.get_logger().info(
+                        f"cmd_vel watchdog: no message for {elapsed:.3f}s "
+                        "— sent zero velocity to robot"
+                    )
+
+            self._cmd_vel_watchdog_shutdown.wait(0.02)
+
+    def stop_cmd_vel_watchdog(self) -> None:
+        """Shut down the watchdog and send a final zero velocity."""
+        self._cmd_vel_watchdog_shutdown.set()
+        try:
+            self.robot_control_service.handle_cmd_vel(
+                0.0, 0.0, 0.0, "0", self.config.obstacle_avoidance
+            )
+        except Exception:
+            pass
 
     # CycloneDDS callbacks
     def _on_cyclonedds_low_state(self, msg: LowState) -> None:
