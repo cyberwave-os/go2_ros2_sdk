@@ -145,6 +145,7 @@ class Go2DriverNode(Node):
                 ('publish_raw_voxel', False),
                 ('obstacle_avoidance', False),
                 ('publish_odom_tf', True),
+                ('subscribe_dds_lidar', False),
                 ('cmd_vel_timeout_sec', 0.25),
                 ('data_stall_timeout_sec', 15.0),
                 ('max_reconnect_delay_sec', 60.0),
@@ -292,7 +293,8 @@ class Go2DriverNode(Node):
         # Joystick subscriber
         self.create_subscription(Joy, 'joy', self._on_joy, qos_profile)
 
-        # CycloneDDS support
+        # DDS topic subscriptions from the Go2's internal ROS2 stack.
+        # Full CycloneDDS mode replaces WebRTC entirely.
         if self.config.conn_type == 'cyclonedds':
             self.create_subscription(
                 LowState, 'lowstate',
@@ -303,6 +305,18 @@ class Go2DriverNode(Node):
             self.create_subscription(
                 PointCloud2, '/utlidar/cloud',
                 self._on_cyclonedds_lidar, qos_profile)
+
+        # Subscribe to raw DDS lidar independently of conn_type.
+        # Enables WebRTC (video/control) + raw /utlidar/cloud for FAST-LIO.
+        subscribe_dds_lidar = self.get_parameter(
+            'subscribe_dds_lidar').get_parameter_value().bool_value
+        if subscribe_dds_lidar and self.config.conn_type != 'cyclonedds':
+            self.create_subscription(
+                PointCloud2, '/utlidar/cloud',
+                self._on_cyclonedds_lidar, qos_profile)
+            self.get_logger().info(
+                "DDS lidar subscription active — listening for /utlidar/cloud"
+            )
 
     def _on_set_parameters(self, params) -> SetParametersResult:
         """Callback for parameter changes"""
