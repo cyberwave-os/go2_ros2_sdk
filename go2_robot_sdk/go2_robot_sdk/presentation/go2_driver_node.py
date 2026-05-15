@@ -467,9 +467,14 @@ class Go2DriverNode(Node):
         pass
 
     def _on_cyclonedds_lidar(self, msg: PointCloud2) -> None:
-        """Processing lidar for CycloneDDS"""
-        # You can add processing for CycloneDDS here if needed
-        pass
+        """Forward /utlidar/cloud from the Go2's internal DDS to point_cloud2.
+
+        Unlike the WebRTC voxel path, this cloud may be in sensor frame
+        (useful for FAST-LIO).  We republish it as-is so the frame_id
+        metadata is preserved for downstream consumers to inspect.
+        """
+        if self.ros2_publisher.publishers['lidar']:
+            self.ros2_publisher.publishers['lidar'][0].publish(msg)
 
     async def connect_robots(self) -> None:
         """Connect to robots (non-WebRTC paths only).
