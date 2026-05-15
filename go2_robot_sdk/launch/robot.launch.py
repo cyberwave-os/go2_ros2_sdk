@@ -112,6 +112,11 @@ class Go2NodeFactory:
                 default_value='false',
                 description='Use C++ lidar_processor_cpp nodes instead of Python lidar_processor nodes'
             ),
+            DeclareLaunchArgument(
+                'publish_odom_tf',
+                default_value=os.getenv('GO2_PUBLISH_ODOM_TF', 'true'),
+                description='Publish odom->base_link TF from the SDK (disable when using external odometry like FAST-LIO)'
+            ),
         ]
     
     def create_robot_state_nodes(self) -> List[Node]:
@@ -236,6 +241,7 @@ class Go2NodeFactory:
         voxel_deduplicate_points = LaunchConfiguration('voxel_deduplicate_points')
         use_cpp_voxel_decoder = LaunchConfiguration('use_cpp_voxel_decoder')
         use_cpp_lidar = LaunchConfiguration('use_cpp_lidar')
+        publish_odom_tf = LaunchConfiguration('publish_odom_tf')
         with_tts = LaunchConfiguration('enable_tts', default='true')
 
         # When C++ voxel decoder is active, disable Python-side decode and
@@ -278,6 +284,7 @@ class Go2NodeFactory:
                     'decode_lidar': effective_decode_lidar,
                     'publish_raw_voxel': effective_publish_raw_voxel,
                     'lite_subscriptions': lite_subscriptions,
+                    'publish_odom_tf': publish_odom_tf,
                 }, {
                     'qos_overrides': lidar_qos_overrides
                 }],

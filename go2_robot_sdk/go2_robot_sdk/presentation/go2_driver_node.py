@@ -63,12 +63,15 @@ class Go2DriverNode(Node):
         self.broadcaster = TransformBroadcaster(self, qos=QoSProfile(depth=10))
         self.bridge = CvBridge()
         
+        publish_odom_tf = self.get_parameter('publish_odom_tf').get_parameter_value().bool_value
+
         # Architecture layers initialization
         self.ros2_publisher = ROS2Publisher(
             node=self,
             config=self.config,
             publishers=self.publishers_dict,
-            broadcaster=self.broadcaster
+            broadcaster=self.broadcaster,
+            publish_odom_tf=publish_odom_tf,
         )
         
         self.robot_data_service = RobotDataService(self.ros2_publisher)
@@ -141,6 +144,7 @@ class Go2DriverNode(Node):
                 ('lite_subscriptions', False),
                 ('publish_raw_voxel', False),
                 ('obstacle_avoidance', False),
+                ('publish_odom_tf', True),
                 ('cmd_vel_timeout_sec', 0.25),
                 ('data_stall_timeout_sec', 15.0),
                 ('max_reconnect_delay_sec', 60.0),

@@ -26,11 +26,19 @@ logger = logging.getLogger(__name__)
 class ROS2Publisher(IRobotDataPublisher):
     """ROS2 adapter for publishing robot data"""
 
-    def __init__(self, node: Node, config: RobotConfig, publishers: dict, broadcaster: TransformBroadcaster):
+    def __init__(
+        self,
+        node: Node,
+        config: RobotConfig,
+        publishers: dict,
+        broadcaster: TransformBroadcaster,
+        publish_odom_tf: bool = True,
+    ):
         self.node = node
         self.config = config
         self.publishers = publishers
         self.broadcaster = broadcaster
+        self._publish_odom_tf = publish_odom_tf
         self.bridge = CvBridge()
         self.camera_info = load_camera_info()
 
@@ -41,11 +49,10 @@ class ROS2Publisher(IRobotDataPublisher):
 
         try:
             robot_idx = int(robot_data.robot_id)
-            
-            # Publish transform
-            self._publish_transform(robot_data, robot_idx)
-            
-            # Publish odometry topic
+
+            if self._publish_odom_tf:
+                self._publish_transform(robot_data, robot_idx)
+
             self._publish_odometry_topic(robot_data, robot_idx)
             
         except Exception as e:
