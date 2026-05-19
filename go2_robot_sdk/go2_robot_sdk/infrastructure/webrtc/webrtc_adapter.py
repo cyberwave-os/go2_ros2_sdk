@@ -59,6 +59,7 @@ class WebRTCAdapter(IRobotDataReceiver, IRobotController):
                 on_video_frame=self.on_video_frame_callback if self.config.enable_video else None,
                 on_disconnected=self._on_connection_lost,
                 decode_lidar=self.config.decode_lidar,
+                aes_128_key=self.config.aes_128_key,
             )
             
             self.connections[robot_id] = conn
