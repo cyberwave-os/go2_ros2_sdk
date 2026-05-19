@@ -128,6 +128,7 @@ class Go2DriverNode(Node):
         robot_ip = os.getenv('ROBOT_IP', os.getenv('GO2_IP', ''))
         token = os.getenv('ROBOT_TOKEN', os.getenv('GO2_TOKEN', ''))
         conn_type = os.getenv('CONN_TYPE', '')
+        aes_128_key = os.getenv('GO2_AES_128_KEY', '')
 
         # Declare parameters
         self.declare_parameters(
@@ -136,6 +137,7 @@ class Go2DriverNode(Node):
                 ('robot_ip', robot_ip),
                 ('token', token),
                 ('conn_type', conn_type),
+                ('aes_128_key', aes_128_key),
                 ('enable_video', True),
                 ('decode_lidar', True),
                 ('lite_subscriptions', False),
@@ -159,7 +161,8 @@ class Go2DriverNode(Node):
             decode_lidar=self.get_parameter('decode_lidar').get_parameter_value().bool_value,
             lite_subscriptions=self.get_parameter('lite_subscriptions').get_parameter_value().bool_value,
             publish_raw_voxel=self.get_parameter('publish_raw_voxel').get_parameter_value().bool_value,
-            obstacle_avoidance=self.get_parameter('obstacle_avoidance').get_parameter_value().bool_value
+            obstacle_avoidance=self.get_parameter('obstacle_avoidance').get_parameter_value().bool_value,
+            aes_128_key=self.get_parameter('aes_128_key').get_parameter_value().string_value,
         )
 
         # Log configuration

@@ -17,13 +17,14 @@ class RobotConfig:
     publish_raw_voxel: bool
     obstacle_avoidance: bool
     conn_mode: str  # 'single' or 'multi'
+    aes_128_key: str = ""  # per-device key for Go2 >= 1.1.15 / G1 >= 1.5.1
 
     @classmethod
     def from_params(cls, robot_ip: str, token: str, conn_type: str,
                    enable_video: bool, decode_lidar: bool,
                    lite_subscriptions: bool,
-                   publish_raw_voxel: bool, obstacle_avoidance: bool):
-        """Создание конфигурации из параметров"""
+                   publish_raw_voxel: bool, obstacle_avoidance: bool,
+                   aes_128_key: str = ""):
         robot_ip_list = robot_ip.replace(" ", "").split(",")
         conn_mode = "single" if (
             len(robot_ip_list) == 1 and conn_type != "cyclonedds") else "multi"
@@ -37,5 +38,6 @@ class RobotConfig:
             lite_subscriptions=lite_subscriptions,
             publish_raw_voxel=publish_raw_voxel,
             obstacle_avoidance=obstacle_avoidance,
-            conn_mode=conn_mode
+            conn_mode=conn_mode,
+            aes_128_key=aes_128_key,
         ) 

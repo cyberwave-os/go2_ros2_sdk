@@ -44,11 +44,13 @@ class Go2Connection:
         on_video_frame: Optional[Callable] = None,
         on_disconnected: Optional[Callable] = None,
         decode_lidar: bool = True,
+        aes_128_key: str = "",
     ):
         self.pc = RTCPeerConnection()
         self.robot_ip = robot_ip
         self.robot_num = str(robot_num)
         self.token = token
+        self.aes_128_key = aes_128_key.strip()
         self.robot_validation = "PENDING"
         self.validation_result = "PENDING"
         
@@ -233,17 +235,23 @@ class Go2Connection:
             logger.error(f"Failed to set traffic saving: {e}")
             return False
 
-    #decrypt RSA key from firmware version >=1.1.8
-    def decrypt_con_notify_data(self, encrypted_b64: str) -> str:
-        key = bytes([232, 86, 130, 189, 22, 84, 155, 0, 142, 4, 166, 104, 43, 179, 235, 227])
+    def decrypt_con_notify_data(self, encrypted_b64: str, device_key: bytes | None = None) -> str:
+        """Decrypt the con_notify data1 payload.
+
+        For ``data2=2`` (firmware < 1.1.15) a static GCM key is used.
+        For ``data2=3`` (firmware >= 1.1.15) the caller must supply the
+        per-device AES-128 key retrieved from the Unitree Cloud.
+        """
+        if device_key is None:
+            device_key = bytes([232, 86, 130, 189, 22, 84, 155, 0, 142, 4, 166, 104, 43, 179, 235, 227])
         data = base64.b64decode(encrypted_b64)
         if len(data) < 28:
             raise ValueError("Decryption failed: input data too short")
         tag = data[-16:]
         nonce = data[-28:-16]
         ciphertext = data[:-28]
-        
-        aesgcm = AESGCM(key) 
+
+        aesgcm = AESGCM(device_key)
         plaintext = aesgcm.decrypt(nonce, ciphertext + tag, None)
         return plaintext.decode('utf-8')
 	 
@@ -285,6 +293,16 @@ class Go2Connection:
 
                 if data2 == 2:
                     data1 = self.decrypt_con_notify_data(data1)
+                elif data2 == 3:
+                    if not self.aes_128_key:
+                        raise Go2ConnectionError(
+                            f"This robot speaks data2=3 (G1 ≥ 1.5.1 / Go2 ≥ 1.1.15) — "
+                            "the per-device AES-128 key is required to decrypt the LAN "
+                            "handshake. Set GO2_AES_128_KEY (fetch via "
+                            "'unitree-fetch-aes-key --device-type Go2')."
+                        )
+                    device_key = bytes.fromhex(self.aes_128_key)
+                    data1 = self.decrypt_con_notify_data(data1, device_key=device_key)
                 # Extract the public key from 'data1'
                 public_key_pem = data1[10:len(data1)-10]
                 path_ending = PathCalculator.calc_local_path_ending(data1)
