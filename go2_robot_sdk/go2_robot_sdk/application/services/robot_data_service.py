@@ -17,6 +17,7 @@ class RobotDataService:
 
     def __init__(self, publisher: IRobotDataPublisher):
         self.publisher = publisher
+        self._logged_bms_version = False
 
     def process_webrtc_message(self, msg: Dict[str, Any], robot_id: str) -> None:
         """Process WebRTC message"""
@@ -144,6 +145,12 @@ class RobotDataService:
             )
             bms = low_state_data.get("bms_state")
             if isinstance(bms, dict):
+                if not self._logged_bms_version:
+                    self._logged_bms_version = True
+                    logger.warning(
+                        f"Go2 BMS firmware version: "
+                        f"{bms.get('version_high')}.{bms.get('version_low')}"
+                    )
                 robot_data.battery_data = BatteryData(
                     voltage=float(low_state_data.get("power_v", 0.0)),
                     state_of_charge=float(bms.get("soc", 0.0)),
